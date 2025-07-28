@@ -1,0 +1,158 @@
+setwd("D:/CRISPR")
+
+#Download the data
+
+download.file("http://pinapl-py.ucsd.edu/example-data")
+unzip("PinAPL-py_demo_data.zip")
+
+
+#Run externally on Python
+  
+#fastqc Control_R1_S14_L008_R1_001_x.fastq.gz Control_R2_S15_L008_R1_001_x.fastq.gz ToxA_R1_98_S2_L008_R1_001_x.fastq.gz ToxA_R2_S2_L005_R1_001_x.fastq.gz ToxB_R1_98_S4_L008_R1_001_x.fastq.gz ToxB_R2_S4_L005_R1_001_x.fastq.gz
+
+
+# Working with Crispr fastQ
+
+library(ShortRead)
+
+fqSample <- FastqSampler("Tox-A_R01_98_S2_L008_R1_001_x.fastq.gz",n=10^6)
+fastq <- yield(fqSample)
+fastq
+
+readSequences <- sread(fastq)
+readQuality <- quality(fastq)
+readIDs <- id(fastq)
+readSequences
+
+readQuality <- quality(fastq)
+readQualities <- alphabetScore(readQuality)
+readQualities[1:10]
+
+library(ggplot2)
+toPlot <- data.frame(ReadQ=readQualities)
+ggplot(toPlot,aes(x=ReadQ))+geom_histogram()+theme_minimal()
+
+readSequences <- sread(fastq)
+readSequences_AlpFreq <- alphabetFrequency(readSequences)
+readSequences_AlpFreq[1:3,]
+
+summed__AlpFreq  <- colSums(readSequences_AlpFreq)
+summed__AlpFreq[c("A","C","G","T","N")]
+
+readSequences_AlpbyCycle <- alphabetByCycle(readSequences)
+readSequences_AlpbyCycle[1:4,1:10]
+
+AFreq <- readSequences_AlpbyCycle["A",]
+CFreq <- readSequences_AlpbyCycle["C",]
+GFreq <- readSequences_AlpbyCycle["G",]
+TFreq <- readSequences_AlpbyCycle["T",]
+toPlot <- data.frame(Count=c(AFreq,CFreq,GFreq,TFreq),
+                     Cycle=rep(1:max(width(readSequences)),4),
+                     Base=rep(c("A","C","G","T"),each=max(width(readSequences))))
+
+ggplot(toPlot,aes(y=Count,x=Cycle,colour=Base))+geom_line()+
+  theme_bw()
+
+# Assess by cycle with raw Crispr data
+qualAsMatrix <- as(readQuality,"matrix")
+qualAsMatrix[1:2,]
+
+toPlot <- colMeans(qualAsMatrix)
+plot(toPlot)
+
+
+#Creating a sgRNA reference
+download.file("http://pinapl-py.ucsd.edu/example-data")
+
+#_____________OR________#
+
+#download from: ("https://www.addgene.org/crispr/libraries/") #Download FASTAQ file of desired library or Get the excel file
+
+#If you download FASTAQ file
+library(ShortRead)
+fastq_file <- "input.fastq"  # replace with your FASTAQ filename
+fq <- readFastq(fastq_file)
+fasta_file <- "GeCKO.fa"
+writeFasta(fq, file=fasta_file)
+
+#If you download the excel files merge them into one TSV file first
+GeCKO <- read.delim("GeCKOv21_Human.tsv")
+GeCKO[1:2,]
+require(Biostrings)
+sgRNALib <- DNAStringSet(GeCKO$seq)
+names(sgRNALib) <- GeCKO$UID
+
+writeXStringSet(sgRNALib,"GeCKO.fa")
+
+#Creating an Rsubread index
+require(Rsubread)
+buildindex("GeCKO",reference = "GeCKO.fa", 
+           indexSplit=FALSE)
+
+
+#Rsubread sgRNA alignment
+
+myFQs <- c("Control_R1_S14_L008_R1_001_x.fastq.gz", "Control_R2_S15_L008_R1_001_x.fastq.gz", "ToxA_R1_98_S2_L008_R1_001_x.fastq.gz", "ToxA_R2_S2_L005_R1_001_x.fastq.gz", "ToxB_R1_98_S4_L008_R1_001_x.fastq.gz", "ToxB_R2_S4_L005_R1_001_x.fastq.gz")
+require(GenomicAlignments)
+counts <- list()
+stats <- list()
+
+for(f in 1:length(myFQs)){
+  stats[[f]] <- align("GeCKO",myFQs[f],output_file = gsub(".fastq.gz",".bam",myFQs[f]),
+                      nthreads=2,unique=TRUE,nBestLocations=1,type = "DNA",TH1 = 1,maxMismatches = 0,indels = 0)
+  temp <- readGAlignments(gsub(".fastq.gz",".bam",myFQs[f]))
+  counts[[f]] <- data.frame(table(seqnames(temp[width(temp) == "20"])),row.names = "Var1")                #screen out reads with less than 20  matches
+}
+myRes <- do.call(cbind,counts)
+
+#Diffrential expression analysis
+library(DESeq2)
+colnames(myRes) <- c("Control_1","Control_2","ToxA_1","ToxA_2","ToxB_1","ToxB_2")
+metadata <- DataFrame(Group=factor(c("Control","Control","ToxA","ToxA","ToxB","ToxB"),levels = c("Control","ToxA","ToxB")),row.names = colnames(myRes))
+require(DESeq2)
+dds <- DESeqDataSetFromMatrix(myRes,colData =  metadata,design = ~Group)
+dds <- DESeq(dds)
+
+normCounts <- counts(dds,normalized=TRUE)
+boxplot(log2(normCounts+0.1))
+
+
+ToxBvsControl <- results(dds,contrast=c("Group","ToxB","Control"))
+ToxBvsControl <- ToxBvsControl[order(ToxBvsControl$pvalue),]
+ToxBvsControl
+ToxBvsControl[order(ToxBvsControl$pvalue),]
+ToxBvsControl
+
+ToxAvsControl <- results(dds,contrast=c("Group","ToxA","Control"))
+ToxAvsControl <- ToxBvsControl[order(ToxAvsControl$pvalue),]
+ToxAvsControl
+ToxAvsControl[order(ToxAvsControl$pvalue),]
+
+#sgRNA to Gene- ToxBvsControl
+#identify which sgRNAs were signi cantly enriched in ToxB
+ToxBvsControl <- as.data.frame(ToxBvsControl)[order(ToxBvsControl$pvalue),]
+ToxBvsControl$Enriched <- !is.na(ToxBvsControl$padj) & ToxBvsControl$pvalue < 0.05 &ToxBvsControl$log2FoldChange > 0
+ToxBvsControl[1:2,]
+
+ToxBvsControl <- merge(GeCKO,ToxBvsControl,by.x=2,by.y=0)
+ToxBvsControl[1:2,]
+
+genes <- unique(ToxBvsControl$gene_id)
+listofGene <- list()
+for(i in 1:length(genes)){
+  tempRes <- ToxBvsControl[ToxBvsControl$gene_id %in% genes[i],]
+  meanLogFC <- mean(tempRes$log2FoldChange,na.rm=TRUE)
+  logFCs <- paste0(tempRes$log2FoldChange,collapse=";")
+  minPvalue <- min(tempRes$pvalue,na.rm=TRUE) 
+  pvalues <- paste0(tempRes$pvalue,collapse=";")
+  nEnriched <- sum(tempRes$Enriched,na.rm=TRUE) 
+  listofGene[[i]] <- data.frame(Gene=genes[i],meanLogFC,logFCs,minPvalue,pvalues,nEnriched)
+}
+geneTable <- do.call(rbind,listofGene)
+geneTable <- geneTable[order(geneTable$nEnriched,decreasing=TRUE),]
+
+geneTable[1:3,]
+
+
+library(writexl)
+write_xlsx(geneTable, "geneTable.xlsx")
