@@ -1,8 +1,4 @@
-Here's a copy-paste-ready `README.md` tailored to your **CRISPR screen analysis pipeline using R**. It covers the purpose, structure, software used, and step-by-step usage. You can save this as a file named `README.md` in your GitHub repo:
 
----
-
-```markdown
 # 🧬 CRISPR-Cas9 Screen Analysis Pipeline in R
 
 This repository provides a complete pipeline for analyzing CRISPR-Cas9 pooled screen data using FASTQ files, sgRNA libraries, and differential abundance testing via DESeq2 in R.
